@@ -7,5 +7,5 @@ RUN apt update && \
 
 WORKDIR /app
 COPY . ./
-
+ENV GRADIO_SERVER_PORT=6005
 RUN uv pip install --system -e . && uv pip install --system -e .[compile]

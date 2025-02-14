@@ -16,7 +16,6 @@ from zonos.config import ZonosConfig
 from zonos.sampling import sample_from_logits
 from zonos.speaker_cloning import SpeakerEmbeddingLDA
 
-
 class Zonos(nn.Module):
     def __init__(self, config: ZonosConfig):
         super().__init__()
@@ -40,6 +39,7 @@ class Zonos(nn.Module):
         self._cg_logits = None
         self._cg_inference_params = None
         self._cg_scale = None
+
 
     @classmethod
     def from_pretrained(cls, repo_id: str, revision: str | None = None, device: str = "cuda") -> "Zonos":

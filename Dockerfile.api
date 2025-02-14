@@ -1,4 +1,6 @@
 FROM pytorch/pytorch:2.6.0-cuda12.4-cudnn9-devel
+RUN apt update
+RUN apt install -y ffmpeg
 RUN pip install uv fastapi uvicorn torch torchaudio pydub
 
 RUN apt update && \
@@ -9,4 +11,6 @@ WORKDIR /app
 COPY . ./
 COPY api ./
 
-RUN uv pip install --system -e . && uv pip install --system -e .[compile]
+RUN uv pip install --system -e .
+RUN uv pip install --system -e .[compile]
+RUN python3 download-model.py

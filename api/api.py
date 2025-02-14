@@ -26,8 +26,8 @@ app = FastAPI(title="Audio Generation API", openapi_url="/api/docs/openapi.json"
 model = Zonos.from_pretrained("Zyphra/Zonos-v0.1-transformer", device="cuda")
 
 # Ensure output directories exist
-OUTPUT_DIR = "generated_audio"
-SAMPLES_DIR = "samples"
+OUTPUT_DIR = "/data/generated_audio"
+SAMPLES_DIR = "/data/samples"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 os.makedirs(SAMPLES_DIR, exist_ok=True)
 
@@ -70,7 +70,7 @@ async def upload_sample(sample_name: str, audio_file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/api/generate-audio/")
+@app.get("/api/generate-audio/")
 async def generate_audio(
     text: str,
     sample_name: str = None,

@@ -10,10 +10,11 @@ services:
     network_mode: "host"
     stdin_open: true
     tty: true
-    command: ["python3", "gradio_interface.py", "port", "6005"]
+    command: ["python3", "gradio_interface.py"]
     environment:
       - NVIDIA_VISIBLE_DEVICES=0
       - GRADIO_SHARE=False
+    restart: always
   zonosapi:
     build:
       context: .
@@ -27,3 +28,6 @@ services:
     environment:
       - NVIDIA_VISIBLE_DEVICES=0
       - GRADIO_SHARE=False
+    restart: always
+    volumes:
+      - D:/dockerdata/zonos:/data:rw
