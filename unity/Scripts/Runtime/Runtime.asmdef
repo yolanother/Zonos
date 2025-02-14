@@ -1,0 +1,15 @@
+{
+    "name": "Doubtech.ThirdParty.Zonos",
+    "rootNamespace": "DoubTech.ThirdParty.Zonos",
+    "references": [
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
