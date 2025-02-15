@@ -1,6 +1,9 @@
+using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.RegularExpressions;
+using System.Threading.Tasks;
 using UnityEngine;
 using UnityEngine.Networking;
 using UnityEditor;
@@ -23,6 +26,8 @@ namespace DoubTech.ThirdParty.Zonos
         [Tooltip("Audio source for playback.")]
         [SerializeField] private AudioSource audioSource;
 
+        [SerializeField] private bool debug = false;
+
         [Range(0, 1)] public float happiness = 0;
         [Range(0, 1)] public float sadness = 0;
         [Range(0, 1)] public float disgust = 0;
@@ -32,43 +37,90 @@ namespace DoubTech.ThirdParty.Zonos
         [Range(0, 1)] public float other = 0;
         [Range(0, 1)] public float neutral = 1;
 
-        private Queue<AudioClip> audioQueue = new Queue<AudioClip>();
+        private Queue<QueuedPlayback> audioQueue = new Queue<QueuedPlayback>();
+        private Task pendingWebRequest;
+
+        private class QueuedPlayback
+        {
+            public string text;
+            public AudioClip audioClip;
+            public bool isLoaded;
+            public Action<string> onStartPlayback;
+            public Action<string> onStopPlayback;
+        }
+        
         private bool isPlaying = false;
+        private bool isLoading = false;
+        private Coroutine playbackCoroutine;
+
+        public bool IsPlaying => isPlaying;
+        public bool IsLoading => isLoading;
+
+        private void Log(string message, params object[] args)
+        {
+            if(debug) Debug.Log(string.Format(message, args));
+        }
 
         public void Speak(string text)
         {
-            StopCurrentPlayback();
-            StartCoroutine(ProcessTextAndSpeak(text));
+            _ = SpeakAsync(text);
         }
 
         public void SpeakQueued(string text)
         {
-            StartCoroutine(ProcessTextAndSpeak(text));
+            _ = SpeakQueuedAsync(text);
         }
 
-        private void StopCurrentPlayback()
+        public async Task SpeakAsync(string text)
         {
+            Stop();
+            if(null != pendingWebRequest) await pendingWebRequest;
+            await SpeakQueuedAsync(text);
+        }
+
+        public async Task<string> SpeakQueuedAsync(string text)
+        {
+            var completionTask = new TaskCompletionSource<string>();
+            ProcessTextAndSpeak(new QueuedPlayback
+            {
+                text = text,
+                onStopPlayback = (text) =>
+                {
+                    completionTask.SetResult(text);
+                },
+            });
+            return await completionTask.Task;
+        }
+
+        public void Stop()
+        {
+            StopAllCoroutines();
             audioSource.Stop();
+            foreach (var clip in audioQueue)
+            {
+                clip.onStopPlayback?.Invoke(clip.text);
+            }
             audioQueue.Clear();
             isPlaying = false;
+            isLoading = false;
         }
 
-        private IEnumerator ProcessTextAndSpeak(string text)
+        private void ProcessTextAndSpeak(QueuedPlayback text)
         {
-            List<string> chunks = ChunkText(text, maxTtsLength);
+            List<QueuedPlayback> chunks = ChunkText(text, maxTtsLength);
+            chunks.First().onStartPlayback = (t) => text.onStartPlayback?.Invoke(t);
+            chunks.Last().onStopPlayback = (t) => text.onStopPlayback?.Invoke(t);
 
-            foreach (string chunk in chunks)
+            foreach (QueuedPlayback chunk in chunks)
             {
-                yield return StartCoroutine(RequestTTS(chunk));
+                StartCoroutine(RequestTTS(chunk));
             }
-            
-            if (!isPlaying) StartCoroutine(PlayAudioQueue());
         }
 
-        private List<string> ChunkText(string text, int maxLength)
+        private List<QueuedPlayback> ChunkText(QueuedPlayback text, int maxLength)
         {
-            List<string> chunks = new List<string>();
-            string[] lines = text.Split('\n');
+            List<QueuedPlayback> chunks = new List<QueuedPlayback>();
+            string[] lines = text.text.Split('\n');
             
             foreach (string line in lines)
             {
@@ -88,14 +140,17 @@ namespace DoubTech.ThirdParty.Zonos
                     {
                         if (currentChunk.Count > 0)
                         {
-                            chunks.Add(string.Join(" ", currentChunk));
+                            chunks.Add(new QueuedPlayback { text = string.Join(" ", currentChunk)});
                             currentChunk.Clear();
                             currentLength = 0;
                         }
 
                         if (sentence.Length > maxLength)
                         {
-                            chunks.AddRange(BreakLongSentence(sentence, maxLength));
+                            foreach (var s in BreakLongSentence(sentence, maxLength))
+                            {
+                                chunks.Add(new QueuedPlayback {text = s});
+                            }
                         }
                         else
                         {
@@ -107,7 +162,7 @@ namespace DoubTech.ThirdParty.Zonos
 
                 if (currentChunk.Count > 0)
                 {
-                    chunks.Add(string.Join(" ", currentChunk));
+                    chunks.Add(new QueuedPlayback {text = string.Join(" ", currentChunk)});
                 }
             }
 
@@ -142,24 +197,43 @@ namespace DoubTech.ThirdParty.Zonos
             return parts;
         }
 
-        private IEnumerator RequestTTS(string textChunk)
+        private IEnumerator RequestTTS(QueuedPlayback textChunk)
         {
-            string url = $"{ttsUrl}?text={UnityWebRequest.EscapeURL(textChunk)}&sample_name=vampire&happiness={happiness}&sadness={sadness}&disgust={disgust}&fear={fear}&surprise={surprise}&anger={anger}&other={other}&neutral={neutral}&vq_score=0.78&fmax=24000&pitch_std=45&speaking_rate=15&dnsmos_ovrl=4&speaker_noised=false";
+            if(null != pendingWebRequest) yield return new WaitUntil(() => pendingWebRequest.Status == TaskStatus.RanToCompletion);
+            if (string.IsNullOrEmpty(textChunk.text.Trim()))
+            {
+                textChunk.isLoaded = true;
+                yield break;
+            }
+            var task = new TaskCompletionSource<bool>();
+            pendingWebRequest = task.Task;
+            isLoading = true;
+            string url = $"{ttsUrl}?text={UnityWebRequest.EscapeURL(textChunk.text)}&sample_name=vampire&happiness={happiness}&sadness={sadness}&disgust={disgust}&fear={fear}&surprise={surprise}&anger={anger}&other={other}&neutral={neutral}&vq_score=0.78&fmax=24000&pitch_std=45&speaking_rate=15&dnsmos_ovrl=4&speaker_noised=false";
             
+            Log("Requesting: {0}", textChunk.text);
             using (UnityWebRequest request = UnityWebRequestMultimedia.GetAudioClip(url, AudioType.WAV))
             {
                 yield return request.SendWebRequest();
 
                 if (request.result == UnityWebRequest.Result.Success)
                 {
-                    AudioClip clip = DownloadHandlerAudioClip.GetContent(request);
-                    audioQueue.Enqueue(clip);
+                    textChunk.audioClip = DownloadHandlerAudioClip.GetContent(request);
+                    textChunk.audioClip.name = textChunk.text.Substring(0, Mathf.Min(textChunk.text.Length, 10));
+                    textChunk.isLoaded = true;
+                    Log("Enqueued: {0}", textChunk.text);
+                    audioQueue.Enqueue(textChunk);
                 }
                 else
                 {
-                    Debug.LogError($"TTS request failed: {request.error}");
+                    Debug.LogError($"TTS request failed: {request.error}, could not play back {textChunk.text}");
+                    task.SetResult(false);
                 }
             }
+
+            isLoading = false;
+            task.TrySetResult(true);
+            
+            if (!isPlaying) playbackCoroutine = StartCoroutine(PlayAudioQueue());
         }
 
         private IEnumerator PlayAudioQueue()
@@ -168,10 +242,24 @@ namespace DoubTech.ThirdParty.Zonos
 
             while (audioQueue.Count > 0)
             {
-                AudioClip clip = audioQueue.Dequeue();
-                audioSource.clip = clip;
-                audioSource.Play();
-                yield return new WaitForSeconds(clip.length);
+                QueuedPlayback clip = audioQueue.Dequeue();
+                yield return new WaitUntil(() => clip.isLoaded);
+                if (clip.audioClip != null)
+                {
+                    Log("Playing: {0} {1}", clip.audioClip.ToString(), clip.text);
+                    audioSource.clip = clip.audioClip;
+                    audioSource.loop = false;
+                    audioSource.Play();
+                    clip.onStartPlayback?.Invoke(clip.text);
+
+                    while (audioSource.isPlaying)
+                    {
+                        yield return new WaitForSeconds(clip.audioClip.length - audioSource.time);
+                        yield return null;
+                    }
+                }
+
+                clip.onStopPlayback?.Invoke(clip.text);
             }
 
             isPlaying = false;
